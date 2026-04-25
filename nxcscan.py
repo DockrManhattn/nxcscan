@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script Name: template_script.py
+Script Name: nxcscan.py
 Description: Python script template using ~/.config/<APPLICATION_NAME>/config.json for configuration.
 Author: dockrmanhattn@gmail.com
 Date: 2026-04-25
