@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Script Name: nxcscan.py
+Script Name: template_script.py
 Description: Python script template using ~/.config/<APPLICATION_NAME>/config.json for configuration.
 Author: dockrmanhattn@gmail.com
-Date: 2026-04-25
+Date: YYYY-MM-DD
 """
 
 import os
@@ -221,25 +221,31 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
         for host in hosts:
             variants = []
             if service == "smb":
-                variants.append({"username": "", "password": "", "hash_value": "", "ticket": False, "label": "anonymous access"})
-                variants.append({"username": "a", "password": "", "hash_value": "", "ticket": False, "label": "guest access"})
                 if args.username:
+                    # Only user variants, each with base and shares
                     if args.password:
-                        variants.append({"username": args.username, "password": args.password, "hash_value": "", "ticket": False, "label": f"{args.username}-pass"})
+                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass-base", "shares": False})
+                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass-shares", "shares": True})
                     if args.hash:
-                        variants.append({"username": args.username, "password": "", "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash"})
+                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash-base", "shares": False})
+                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash-shares", "shares": True})
                     if args.ticket:
-                        variants.append({"username": args.username, "password": "", "hash_value": "", "ticket": True, "label": f"{args.username}-kcache"})
+                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache-base", "shares": False})
+                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache-shares", "shares": True})
+                else:
+                    # No user, anonymous and guest with shares
+                    variants.append({"username": "", "password": "", "hash_value": "", "ticket": False, "label": "anonymous access", "shares": True})
+                    variants.append({"username": "a", "password": "", "hash_value": "", "ticket": False, "label": "guest access", "shares": True})
             else:
                 if not args.username:
-                    variants.append({"username": None, "password": None, "hash_value": None, "ticket": False, "label": "default"})
+                    variants.append({"username": None, "password": None, "hash_value": None, "ticket": False, "label": "default", "shares": False})
                 else:
                     if args.password:
-                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass"})
+                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass", "shares": False})
                     if args.hash:
-                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash"})
+                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash", "shares": False})
                     if args.ticket:
-                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache"})
+                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache", "shares": False})
 
             for variant in variants:
                 command = build_nxc_command(
@@ -252,7 +258,7 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
                     args.domain,
                     args.proxychains,
                     args.local_auth,
-                    shares=(service == "smb"),
+                    shares=variant.get("shares", service == "smb"),
                 )
                 target_filename = convert_target_to_filename(args.target, variant["username"], args.domain)
                 output_file = os.path.join(output_dir, f"nxc-{service}-{target_filename}-{host}-{variant['label']}.txt")
@@ -271,14 +277,14 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
                     base_color = Fore.RED
 
                 # Only log running and command for non-failed runs
-                if base_color != Fore.RED:
+                if base_color != Fore.RED or service == "smb":
                     logger.info(f"Running nxc {service} against {host} [{variant['label']}]")
                     logger.info(f"Command: {command}")
 
                 # Check for pwned indication
                 pwned_line = ""
                 if "(Pwn3d!)" in result.stdout and args.username and args.username in result.stdout:
-                    pwned_line = f"🎉🎉🎉🎉🎉 \033[1;95mPWNED! {host} {service} with {variant['username']}\033[0m 🎉🎉🎉🎉🎉"
+                    pwned_line = f"🎉🎉🔥🎉🎉 \033[1;95m(Pwn3d!) {host} {service} with {variant['username']} (Pwn3d!)\033[0m 🎉🎉🔥🎉🎉"
 
                 colorized_output = colorize_nxc_output(result.stdout, base_color) if result.stdout else ""
 
@@ -295,11 +301,11 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
                         out.write(result.stderr)
 
                 # Display the output in console via logger
-                if colorized_output.strip() and base_color != Fore.RED:
+                if colorized_output.strip() and (base_color != Fore.RED or service == "smb"):
                     for line in colorized_output.strip().split('\n'):
                         if line.strip():
                             print(line)
-                if result.stderr.strip() and base_color != Fore.RED and "unrecognized arguments" not in result.stderr:
+                if result.stderr.strip() and (base_color != Fore.RED or service == "smb") and "unrecognized arguments" not in result.stderr:
                     logger.warning(f"STDERR for {host}: {result.stderr.strip()}")
 
                 # Highlight pwned lines in the output file
@@ -606,5 +612,9 @@ def main():
 
     logger.debug("Completing Script Execution.")
 
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(0)
