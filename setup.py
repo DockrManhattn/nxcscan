@@ -17,7 +17,7 @@ os.chmod(nxcscan_dest, 0o755)
 
 # Determine the shell and set the alias
 shell = os.environ.get("SHELL", "").lower()
-alias_command = f'alias nxcscan="python3 {nxcscan_dest}"\n'
+alias_command = f'\nalias nxcscan="python3 {nxcscan_dest}"\n'
 
 # Source the correct shell configuration file
 config_file = None
