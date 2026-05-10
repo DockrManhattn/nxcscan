@@ -138,7 +138,7 @@ def build_nxc_command(protocol, target, username, password, hash_value, ticket, 
         command += " --use-kcache"
     if domain and not local_auth and protocol != "ssh":
         command += f" -d {domain}"
-    if shares or protocol == "smb":
+    if shares:
         command += " --shares"
     if local_auth:
         command += " --local-auth"
@@ -200,21 +200,35 @@ def discover_service_hosts(target, services, logger):
     return service_hosts
 
 
-def write_service_discovery_files(service_hosts, output_dir, logger):
+def write_service_discovery_files(service_hosts, args, output_dir, logger):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
-    discovery_file = os.path.join(output_dir, "service-discovery.txt")
+    discovery_file = os.path.join(output_dir, "nxc-00-service-discovery.txt")
+    header_lines = [
+        f"Target: {args.target}",
+        f"Username: {args.username or 'N/A'}",
+        f"Domain: {args.domain or 'N/A'}",
+        f"OutputDir: {output_dir}",
+        "",
+    ]
     with open(discovery_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(header_lines))
         for service, hosts in service_hosts.items():
             f.write(f"{service}:\n")
             for host in hosts:
                 f.write(f"  {host}\n")
             f.write("\n")
     logger.debug(f"Wrote discovery results to {discovery_file}")
+    return discovery_file
+    # keep compatibility, although this path is unused
 
 
 def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
+    results = {}  # Collect results for summary
+    shares_data = {"read": [], "write": []}  # Collect share information
     for service, hosts in service_hosts.items():
+        if service not in results:
+            results[service] = []
         if not hosts:
             logger.debug(f"No hosts discovered for {service}, skipping nxc.{service}")
             continue
@@ -222,16 +236,13 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
             variants = []
             if service == "smb":
                 if args.username:
-                    # Only user variants, each with base and shares
+                    # Only user variants with shares (run once per user per host)
                     if args.password:
-                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass-base", "shares": False})
-                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass-shares", "shares": True})
+                        variants.append({"username": args.username, "password": args.password, "hash_value": None, "ticket": False, "label": f"{args.username}-pass", "shares": True})
                     if args.hash:
-                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash-base", "shares": False})
-                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash-shares", "shares": True})
+                        variants.append({"username": args.username, "password": None, "hash_value": args.hash, "ticket": False, "label": f"{args.username}-hash", "shares": True})
                     if args.ticket:
-                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache-base", "shares": False})
-                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache-shares", "shares": True})
+                        variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache", "shares": True})
                 else:
                     # No user, anonymous and guest with shares
                     variants.append({"username": "", "password": "", "hash_value": "", "ticket": False, "label": "anonymous access", "shares": True})
@@ -324,6 +335,303 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
                         logger.debug(f"nxc exited {result.returncode} for {host}; see {output_file}")
                     else:
                         logger.warning(f"nxc exited {result.returncode} for {host}; see {output_file}")
+                
+                # Collect result lines for summary (only successful auth [+] or pwned lines)
+                for line in result.stdout.split('\n'):
+                    if line.strip() and ('[+]' in line or '(Pwn3d!)' in line):
+                        results[service].append(line)
+                
+                # For SMB, also collect share information
+                if service == "smb":
+                    lines = result.stdout.split('\n')
+                    current_host = None
+                    hostname = None
+                    in_shares = False
+                    
+                    for line in lines:
+                        # Track current host and hostname
+                        if line.strip().startswith('SMB') and '[*]' in line and 'Server OS' not in line and 'Enumerated' not in line:
+                            parts = line.split()
+                            if len(parts) >= 4:
+                                current_host = parts[1]
+                                # Extract hostname from the line (usually after "name:")
+                                if 'name:' in line:
+                                    name_idx = line.index('name:') + 5
+                                    hostname = line[name_idx:].split(')')[0].strip()
+                        
+                        # Check if we're in the shares section
+                        if 'Share' in line and 'Permissions' in line:
+                            in_shares = True
+                            continue
+                        
+                        if in_shares:
+                            # Skip separator and header lines
+                            if '-----' in line or 'Share' in line:
+                                continue
+                            
+                            # Check if this is a share line
+                            if line.strip().startswith('SMB') and current_host:
+                                # Parse: "SMB IP PORT HOSTNAME SHARENAME PERMS REMARK"
+                                parts = line.split()
+                                if len(parts) >= 5:
+                                    share_name = parts[4]
+                                    if share_name == 'IPC$':
+                                        continue
+                                    # Find permissions - look for READ,WRITE or READ
+                                    if 'READ,WRITE' in line:
+                                        host_info = f"{current_host} ({hostname})" if hostname else current_host
+                                        shares_data["write"].append((current_host, share_name, host_info))
+                                    elif 'READ' in line:
+                                        host_info = f"{current_host} ({hostname})" if hostname else current_host
+                                        shares_data["read"].append((current_host, share_name, host_info))
+                            elif line.strip() and not line.strip().startswith('SMB'):
+                                # End of shares section
+                                in_shares = False
+    
+    return results, shares_data
+
+
+def display_service_summary(results, logger):
+    """Display a summary of scan results organized by service with colorization."""
+    print("\n")
+    logger.info("=" * 80)
+    logger.info("SCAN SUMMARY")
+    logger.info("=" * 80)
+    
+    # Define service display order
+    service_order = ["smb", "winrm", "mssql", "ldap", "wmi", "ssh", "ftp", "vnc"]
+    
+    for service in service_order:
+        if service not in results or not results[service]:
+            continue
+        
+        # Print service header
+        service_header = f"\n{'━' * 80}\n{service.upper()} Results\n{'━' * 80}"
+        print(f"\n{Fore.CYAN}{service_header}{Fore.RESET}")
+        
+        # Print results for this service with colorization
+        for line in results[service]:
+            # Special highlighting for Pwn3d lines
+            if '(Pwn3d!)' in line:
+                # Add bright purple/magenta for pwn3d lines
+                highlighted_line = line.replace("(Pwn3d!)", "\033[1;95m(Pwn3d!)\033[0m")
+                colorized_line = colorize_nxc_output(highlighted_line, base_color=Fore.LIGHTMAGENTA_EX)
+            else:
+                colorized_line = colorize_nxc_output(line)
+            print(colorized_line)
+    
+    print(f"\n{Fore.CYAN}{'━' * 80}{Fore.RESET}\n")
+    logger.info("=" * 80)
+
+
+def build_service_summary_text(results):
+    """Build the service summary text with ANSI color codes."""
+    lines = ["\n"]
+    service_order = ["smb", "winrm", "mssql", "ldap", "wmi", "ssh", "ftp", "vnc"]
+    for service in service_order:
+        if service not in results or not results[service]:
+            continue
+        service_header = f"\n{'━' * 80}\n{service.upper()} Results\n{'━' * 80}"
+        lines.append(f"\n{Fore.CYAN}{service_header}{Fore.RESET}")
+        for line in results[service]:
+            if '(Pwn3d!)' in line:
+                highlighted_line = line.replace("(Pwn3d!)", "\033[1;95m(Pwn3d!)\033[0m")
+                colorized_line = colorize_nxc_output(highlighted_line, base_color=Fore.LIGHTMAGENTA_EX)
+            else:
+                colorized_line = colorize_nxc_output(line)
+            lines.append(colorized_line)
+    lines.append(f"\n{Fore.CYAN}{'━' * 80}{Fore.RESET}\n")
+    return "\n".join(lines)
+
+
+def build_summary_header_text(args, output_dir):
+    """Build a summary header for the summary file."""
+    lines = [
+        f"Target: {args.target}",
+        f"Username: {args.username or 'N/A'}",
+        f"Domain: {args.domain or 'N/A'}",
+        f"OutputDir: {output_dir}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def build_shares_summary_text(shares_data, args, output_dir):
+    """Build the share summary text with ANSI color codes."""
+    if not shares_data["read"] and not shares_data["write"]:
+        return ""
+    lines = ["\n"]
+    if shares_data["write"]:
+        service_header = f"\n{'━' * 80}\nWriteable Shares (READ,WRITE)\n{'━' * 80}"
+        lines.append(f"\n{Fore.LIGHTMAGENTA_EX}{service_header}{Fore.RESET}")
+        share_names = []
+        smb_commands = []
+        nxc_commands = []
+        seen = set()
+        for host, share_name, host_info in shares_data["write"]:
+            key = (host, share_name)
+            if key not in seen:
+                seen.add(key)
+                share_names.append(f"{Fore.GREEN}{host_info}{Fore.RESET}: {Fore.LIGHTYELLOW_EX}{share_name}{Fore.RESET}")
+                for cmd in build_share_access_commands(args, host, share_name, output_dir):
+                    if cmd.startswith("smbclient"):
+                        smb_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+                    else:
+                        nxc_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+        lines.extend(share_names)
+        if smb_commands:
+            lines.append("")
+            lines.append(f"{Fore.YELLOW}smbclient commands:{Fore.RESET}")
+            lines.extend(smb_commands)
+        if nxc_commands:
+            lines.append("")
+            lines.append(f"{Fore.YELLOW}nxc spider_plus commands:{Fore.RESET}")
+            lines.extend(nxc_commands)
+    if shares_data["read"]:
+        service_header = f"\n{'━' * 80}\nReadable Shares (READ)\n{'━' * 80}"
+        lines.append(f"\n{Fore.CYAN}{service_header}{Fore.RESET}")
+        share_names = []
+        smb_commands = []
+        nxc_commands = []
+        seen = set()
+        for host, share_name, host_info in shares_data["read"]:
+            key = (host, share_name)
+            if key not in seen:
+                seen.add(key)
+                share_names.append(f"{Fore.GREEN}{host_info}{Fore.RESET}: {Fore.LIGHTYELLOW_EX}{share_name}{Fore.RESET}")
+                for cmd in build_share_access_commands(args, host, share_name, output_dir):
+                    if cmd.startswith("smbclient"):
+                        smb_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+                    else:
+                        nxc_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+        lines.extend(share_names)
+        if smb_commands:
+            lines.append("")
+            lines.append(f"{Fore.YELLOW}smbclient commands:{Fore.RESET}")
+            lines.extend(smb_commands)
+        if nxc_commands:
+            lines.append("")
+            lines.append(f"{Fore.YELLOW}nxc spider_plus commands:{Fore.RESET}")
+            lines.extend(nxc_commands)
+    lines.append(f"\n{Fore.CYAN}{'━' * 80}{Fore.RESET}\n")
+    return "\n".join(lines)
+
+
+def write_summary_file(output_dir, summary_text, logger):
+    if not summary_text:
+        return
+    summary_file = os.path.join(output_dir, "nxc-zz-summary.txt")
+    try:
+        with open(summary_file, "w", encoding="utf-8") as f:
+            f.write(summary_text)
+        logger.debug(f"Saved scan summary to {summary_file}")
+    except Exception as exc:
+        logger.warning(f"Unable to write summary file: {exc}")
+
+
+def build_share_access_commands(args, host, share_name, output_dir):
+    """Build helper commands for accessing an SMB share."""
+    commands = []
+    if args.username:
+        smb_user = args.username
+        if args.domain:
+            smb_user = f"{args.domain}\\{args.username}"
+        if args.password:
+            smbclient_auth = shlex.quote(f"{smb_user}%{args.password}")
+        else:
+            smbclient_auth = shlex.quote(f"{smb_user}")
+        commands.append(f"smbclient //{host}/{share_name} -U {smbclient_auth}")
+
+    nxc_cmd = build_nxc_command(
+        "smb",
+        host,
+        args.username if args.username else None,
+        args.password if args.password else None,
+        args.hash if args.hash else None,
+        args.ticket,
+        args.domain,
+        args.proxychains,
+        args.local_auth,
+        shares=False,
+    )
+    nxc_cmd += f" --share {shlex.quote(share_name)} -M spider_plus -o DOWNLOAD_FLAG=True"
+    commands.append(nxc_cmd)
+    return commands
+
+def display_shares_summary(shares_data, args, output_dir, logger):
+    """Display a summary of accessible shares organized by read and write access."""
+    if not shares_data["read"] and not shares_data["write"]:
+        return
+    
+    print("\n")
+    logger.info("=" * 80)
+    logger.info("SHARE SUMMARY")
+    logger.info("=" * 80)
+    
+    # Display writable shares first (more interesting)
+    if shares_data["write"]:
+        service_header = f"\n{'━' * 80}\nWriteable Shares (READ,WRITE)\n{'━' * 80}"
+        print(f"\n{Fore.LIGHTMAGENTA_EX}{service_header}{Fore.RESET}")
+        share_names = []
+        smb_commands = []
+        nxc_commands = []
+        seen = set()
+        for host, share_name, host_info in shares_data["write"]:
+            key = (host, share_name)
+            if key not in seen:
+                seen.add(key)
+                share_names.append(f"{Fore.GREEN}{host_info}{Fore.RESET}: {Fore.LIGHTYELLOW_EX}{share_name}{Fore.RESET}")
+                for cmd in build_share_access_commands(args, host, share_name, output_dir):
+                    if cmd.startswith("smbclient"):
+                        smb_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+                    else:
+                        nxc_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+        for line in share_names:
+            print(line)
+        if smb_commands:
+            print("")
+            print(f"{Fore.YELLOW}smbclient commands:{Fore.RESET}")
+            for cmd in smb_commands:
+                print(cmd)
+        if nxc_commands:
+            print("")
+            print(f"{Fore.YELLOW}nxc spider_plus commands:{Fore.RESET}")
+            for cmd in nxc_commands:
+                print(cmd)
+    
+    # Display readable shares
+    if shares_data["read"]:
+        service_header = f"\n{'━' * 80}\nReadable Shares (READ)\n{'━' * 80}"
+        print(f"\n{Fore.CYAN}{service_header}{Fore.RESET}")
+        share_names = []
+        smb_commands = []
+        nxc_commands = []
+        seen = set()
+        for host, share_name, host_info in shares_data["read"]:
+            key = (host, share_name)
+            if key not in seen:
+                seen.add(key)
+                share_names.append(f"{Fore.GREEN}{host_info}{Fore.RESET}: {Fore.LIGHTYELLOW_EX}{share_name}{Fore.RESET}")
+                for cmd in build_share_access_commands(args, host, share_name, output_dir):
+                    if cmd.startswith("smbclient"):
+                        smb_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+                    else:
+                        nxc_commands.append(f"{Fore.WHITE}{cmd}{Fore.RESET}")
+        for line in share_names:
+            print(line)
+        if smb_commands:
+            print("")
+            print(f"{Fore.YELLOW}smbclient commands:{Fore.RESET}")
+            for cmd in smb_commands:
+                print(cmd)
+        if nxc_commands:
+            print("")
+            print(f"{Fore.YELLOW}nxc spider_plus commands:{Fore.RESET}")
+            for cmd in nxc_commands:
+                print(cmd)
+    
+    print(f"\n{Fore.CYAN}{'━' * 80}{Fore.RESET}\n")
+    logger.info("=" * 80)
 
 
 # Static logging style (not persisted to user config)
@@ -605,10 +913,16 @@ def main():
     logger.debug(f"Parsed args: {args}")
 
     service_hosts = discover_service_hosts(args.target, args.services, logger)
-    write_service_discovery_files(service_hosts, output_dir, logger)
-    run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger)
+    write_service_discovery_files(service_hosts, args, output_dir, logger)
+    results, shares_data = run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger)
 
     logger.info("Service discovery and targeted nxc scan complete.")
+    
+    display_service_summary(results, logger)
+    display_shares_summary(shares_data, args, output_dir, logger)
+
+    summary_text = build_summary_header_text(args, output_dir) + build_service_summary_text(results) + build_shares_summary_text(shares_data, args, output_dir)
+    write_summary_file(output_dir, summary_text, logger)
 
     logger.debug("Completing Script Execution.")
 
