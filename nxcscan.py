@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Script Name: nxcscan.py
-Description: nxc lateral scanner
+Description: NetExec (nxc) wrapper that performs service discovery via rustscan and runs targeted nxc scans across SMB, WinRM, MSSQL, LDAP, WMI, SSH, FTP, and VNC.
 Author: dockrmanhattn@gmail.com
-Date: YYYY-MM-DD
+Date: 2026-05-10
 """
 
 import os
@@ -203,7 +203,9 @@ def discover_service_hosts(target, services, logger):
 def write_service_discovery_files(service_hosts, args, output_dir, logger):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
-    discovery_file = os.path.join(output_dir, "nxc-00-service-discovery.txt")
+    cred_segment = args.username if args.username else "unauthed"
+    target_filename = convert_target_to_filename(args.target, cred_segment, args.domain)
+    discovery_file = os.path.join(output_dir, f"nxc-00-service-discovery-{target_filename}.txt")
     header_lines = [
         f"Target: {args.target}",
         f"Username: {args.username or 'N/A'}",
@@ -245,8 +247,8 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
                         variants.append({"username": args.username, "password": None, "hash_value": None, "ticket": True, "label": f"{args.username}-kcache", "shares": True})
                 else:
                     # No user, anonymous and guest with shares
-                    variants.append({"username": "", "password": "", "hash_value": "", "ticket": False, "label": "anonymous access", "shares": True})
-                    variants.append({"username": "a", "password": "", "hash_value": "", "ticket": False, "label": "guest access", "shares": True})
+                    variants.append({"username": "", "password": "", "hash_value": "", "ticket": False, "label": "anon", "shares": True})
+                    variants.append({"username": "a", "password": "", "hash_value": "", "ticket": False, "label": "guest", "shares": True})
             else:
                 if not args.username:
                     variants.append({"username": None, "password": None, "hash_value": None, "ticket": False, "label": "default", "shares": False})
@@ -271,7 +273,8 @@ def run_nxc_on_discovered_hosts(service_hosts, args, output_dir, logger):
                     args.local_auth,
                     shares=variant.get("shares", service == "smb"),
                 )
-                target_filename = convert_target_to_filename(args.target, variant["username"], args.domain)
+                cred_segment = args.username if args.username else "unauthed"
+                target_filename = convert_target_to_filename(args.target, cred_segment, args.domain)
                 output_file = os.path.join(output_dir, f"nxc-{service}-{target_filename}-{host}-{variant['label']}.txt")
                 try:
                     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -517,10 +520,12 @@ def build_shares_summary_text(shares_data, args, output_dir):
     return "\n".join(lines)
 
 
-def write_summary_file(output_dir, summary_text, logger):
+def write_summary_file(output_dir, summary_text, args, logger):
     if not summary_text:
         return
-    summary_file = os.path.join(output_dir, "nxc-zz-summary.txt")
+    cred_segment = args.username if args.username else "unauthed"
+    target_filename = convert_target_to_filename(args.target, cred_segment, args.domain)
+    summary_file = os.path.join(output_dir, f"nxc-zz-summary-{target_filename}.txt")
     try:
         with open(summary_file, "w", encoding="utf-8") as f:
             f.write(summary_text)
@@ -922,7 +927,7 @@ def main():
     display_shares_summary(shares_data, args, output_dir, logger)
 
     summary_text = build_summary_header_text(args, output_dir) + build_service_summary_text(results) + build_shares_summary_text(shares_data, args, output_dir)
-    write_summary_file(output_dir, summary_text, logger)
+    write_summary_file(output_dir, summary_text, args, logger)
 
     logger.debug("Completing Script Execution.")
 
