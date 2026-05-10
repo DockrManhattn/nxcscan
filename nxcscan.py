@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Script Name: template_script.py
-Description: Python script template using ~/.config/<APPLICATION_NAME>/config.json for configuration.
+Script Name: nxcscan.py
+Description: nxc lateral scanner
 Author: dockrmanhattn@gmail.com
 Date: YYYY-MM-DD
 """
