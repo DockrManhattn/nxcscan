@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 from shutil import copyfile
 
@@ -6,6 +7,15 @@ from shutil import copyfile
 home_dir = os.path.expanduser("~")
 local_bin_dir = os.path.join(home_dir, ".local", "bin")
 nxcscan_script = "nxcscan.py"
+
+# Build extended PATH environment so pipx and nxc can be found
+# even if the script is run from a context where .zshrc hasn't been sourced
+env = os.environ.copy()
+extra_paths = [
+    os.path.join(home_dir, ".local", "bin"),
+    "/usr/local/bin",
+]
+env["PATH"] = ":".join(extra_paths) + ":" + env.get("PATH", "")
 
 # Create the .local/bin directory if it doesn't exist
 if not os.path.exists(local_bin_dir):
@@ -17,12 +27,12 @@ copyfile(nxcscan_script, nxcscan_dest)
 os.chmod(nxcscan_dest, 0o755)
 
 # Check nxc version and force install if below 1.30
-def get_nxc_version():
+def get_nxc_version(env=None):
     try:
-        result = subprocess.run(["nxc", "--version"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            ["nxc", "--version"], capture_output=True, text=True, timeout=10, env=env
+        )
         version_str = result.stdout.strip() or result.stderr.strip()
-        # Extract version number (e.g. "1.2.0" or "1.30.1")
-        import re
         match = re.search(r'(\d+)\.(\d+)', version_str)
         if match:
             return int(match.group(1)), int(match.group(2))
@@ -30,21 +40,33 @@ def get_nxc_version():
         pass
     return None
 
-def install_nxc():
+def install_nxc(env):
     print("Installing/updating nxc via pipx...")
+
+    # Find pipx explicitly so we get a clear error if it's still missing
+    pipx_path = subprocess.run(
+        ["which", "pipx"], capture_output=True, text=True, env=env
+    ).stdout.strip()
+
+    if not pipx_path:
+        raise FileNotFoundError(
+            "pipx not found. Install it with: sudo apt install pipx  OR  python3 -m pip install --user pipx"
+        )
+
     subprocess.run(
-        ["pipx", "install", "git+https://github.com/Pennyw0rth/NetExec", "--force"],
-        check=True
+        [pipx_path, "install", "git+https://github.com/Pennyw0rth/NetExec", "--force"],
+        check=True,
+        env=env
     )
     print("nxc installation complete.")
 
-version = get_nxc_version()
+version = get_nxc_version(env=env)
 if version is None:
     print("nxc not found. Installing...")
-    install_nxc()
+    install_nxc(env)
 elif version < (1, 30):
     print(f"nxc version {version[0]}.{version[1]} is below 1.30. Upgrading...")
-    install_nxc()
+    install_nxc(env)
 else:
     print(f"nxc version {version[0]}.{version[1]} satisfies the requirement (>= 1.30). Skipping install.")
 
