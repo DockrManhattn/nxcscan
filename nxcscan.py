@@ -546,6 +546,8 @@ def build_share_access_commands(args, host, share_name, output_dir):
         else:
             smbclient_auth = shlex.quote(f"{smb_user}")
         commands.append(f"smbclient //{host}/{share_name} -U {smbclient_auth}")
+    else:
+        commands.append(f"smbclient //{host}/{share_name} -N")
 
     nxc_cmd = build_nxc_command(
         "smb",
