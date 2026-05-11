@@ -26,7 +26,25 @@ nxcscan_dest = os.path.join(local_bin_dir, "nxcscan.py")
 copyfile(nxcscan_script, nxcscan_dest)
 os.chmod(nxcscan_dest, 0o755)
 
-# Check nxc version and force install if below 1.30
+def ensure_venv_available():
+    """Install python3-venv if ensurepip/venv is not available."""
+    result = subprocess.run(
+        ["python3", "-m", "ensurepip", "--version"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print("python3-venv not available. Installing...")
+        # Detect the Python minor version to install the right package
+        version_result = subprocess.run(
+            ["python3", "--version"], capture_output=True, text=True
+        )
+        py_version = version_result.stdout.strip()  # e.g. "Python 3.13.1"
+        match = re.search(r'3\.(\d+)', py_version)
+        pkg = f"python3.{match.group(1)}-venv" if match else "python3-venv"
+        print(f"Running: sudo apt install -y {pkg}")
+        subprocess.run(["sudo", "apt", "install", "-y", pkg], check=True)
+        print("python3-venv installed successfully.")
+
 def get_nxc_version(env=None):
     try:
         result = subprocess.run(
@@ -42,6 +60,8 @@ def get_nxc_version(env=None):
 
 def install_nxc(env):
     print("Installing/updating nxc via pipx...")
+
+    ensure_venv_available()
 
     # Find pipx explicitly so we get a clear error if it's still missing
     pipx_path = subprocess.run(
