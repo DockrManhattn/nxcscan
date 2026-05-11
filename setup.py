@@ -26,6 +26,24 @@ nxcscan_dest = os.path.join(local_bin_dir, "nxcscan.py")
 copyfile(nxcscan_script, nxcscan_dest)
 os.chmod(nxcscan_dest, 0o755)
 
+def ensure_python_deps():
+    """Install required Python packages if not already available."""
+    deps = ["colorama"]
+    for dep in deps:
+        result = subprocess.run(
+            ["python3", "-m", "pip", "show", dep],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(f"Installing missing dependency: {dep}")
+            subprocess.run(
+                ["python3", "-m", "pip", "install", "--user", dep, "--break-system-packages"],
+                check=True
+            )
+            print(f"{dep} installed successfully.")
+        else:
+            print(f"Dependency already satisfied: {dep}")
+
 def ensure_venv_available():
     """Install python3-venv if ensurepip/venv is not available."""
     result = subprocess.run(
@@ -34,7 +52,6 @@ def ensure_venv_available():
     )
     if result.returncode != 0:
         print("python3-venv not available. Installing...")
-        # Detect the Python minor version to install the right package
         version_result = subprocess.run(
             ["python3", "--version"], capture_output=True, text=True
         )
@@ -63,7 +80,6 @@ def install_nxc(env):
 
     ensure_venv_available()
 
-    # Find pipx explicitly so we get a clear error if it's still missing
     pipx_path = subprocess.run(
         ["which", "pipx"], capture_output=True, text=True, env=env
     ).stdout.strip()
@@ -79,6 +95,8 @@ def install_nxc(env):
         env=env
     )
     print("nxc installation complete.")
+
+ensure_python_deps()
 
 version = get_nxc_version(env=env)
 if version is None:
