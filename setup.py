@@ -129,3 +129,15 @@ else:
     print(alias_command)
 
 print(f"nxcscan has been installed to {nxcscan_dest}. You can run it using 'nxcscan' after sourcing your shell configuration.")
+
+# Reset nxc workspace DBs to avoid schema mismatch errors after a fresh install/upgrade
+nxc_workspace_dir = os.path.join(home_dir, ".nxc", "workspaces", "default")
+db_names = ["ldap.db", "smb.db", "ssh.db", "ftp.db", "rdp.db", "mssql.db", "winrm.db"]
+for db_name in db_names:
+    db_path = os.path.join(nxc_workspace_dir, db_name)
+    if os.path.exists(db_path):
+        backup_path = os.path.join(home_dir, f"nxc_{db_name}.bak")
+        copyfile(db_path, backup_path)
+        os.remove(db_path)
+        print(f"Reset {db_name} (backup saved to {backup_path}).")
+print("nxc databases reset. Fresh schemas will be created on next run.")
