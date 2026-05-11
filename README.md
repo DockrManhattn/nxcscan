@@ -12,35 +12,42 @@ source ~/.bashrc
 nxcscan $IP -u $USER -p $PASS -d $DOMAIN
 ```
 ```bash
-┌─[kali@parrot]─[~]
-└──╼ $nxcscan
-usage: nxcscan.py [-h] [-u USERNAME] [-p PASSWORD] [-H HASH] [-t] [-d DOMAIN]
-                  [-x] [-l]
+┌─[us-dedicated-217-dhcp]─[10.10.14.8]─[dockrmanhattn@htb-x9w2rmvnb6]─[~]
+└──╼ [★]$ nxcscan
+usage: nxcscan.py [-h] [-log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-debug] [-log] [-u USERNAME] [-p PASSWORD] [-H HASH] [-t] [-x] [-d DOMAIN] [-l] [-s SERVICES] [-o OUTPUTDIR]
                   target
 nxcscan.py: error: the following arguments are required: target
-┌─[✗]─[kali@parrot]─[~]
-└──╼ $nxcscan -h
-usage: nxcscan.py [-h] [-u USERNAME] [-p PASSWORD] [-H HASH] [-t] [-d DOMAIN]
-                  [-x] [-l]
+┌─[us-dedicated-217-dhcp]─[10.10.14.8]─[dockrmanhattn@htb-x9w2rmvnb6]─[~]
+└──╼ [★]$ nxcscan -h
+usage: nxcscan.py [-h] [-log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [-debug] [-log] [-u USERNAME] [-p PASSWORD] [-H HASH] [-t] [-x] [-d DOMAIN] [-l] [-s SERVICES] [-o OUTPUTDIR]
                   target
 
-Helper script for running netexec variations
+Template script with configurable logging.
 
 positional arguments:
-  target                Target IP address or CIDR notation
+  target                Target IP address or CIDR notation.
 
 options:
   -h, --help            show this help message and exit
+  -log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
+                        Set the console logging level (file logging is always DEBUG).
+  -debug, -v            Shortcut for -log-level DEBUG.
+  -log                  Show the last 200 lines of the log file and exit.
   -u USERNAME, --username USERNAME
-                        Username for authentication
+                        Username for authentication.
   -p PASSWORD, --password PASSWORD
-                        Password for authentication
-  -H HASH, --hash HASH  Hash for LDAP
-  -t, -k, --ticket      Use kcache for authentication
+                        Password for authentication.
+  -H HASH, --hash HASH  Hash for authentication.
+  -t, --ticket, --use-kcache
+                        Use Kerberos cache (kcache) for authentication.
+  -x, --proxychains     Use proxychains when running commands.
   -d DOMAIN, --domain DOMAIN
-                        Domain for authentication
-  -x, --proxychains     Use proxychains
-  -l, --local-auth      Use local authentication
+                        Domain for authentication.
+  -l, --local-auth      Use local authentication.
+  -s SERVICES, --services SERVICES
+                        Comma-separated list of services to discover and scan (default: smb,mssql,wmi,winrm).
+  -o OUTPUTDIR, -outputdir OUTPUTDIR
+                        Specify a custom base directory for the output folder. The script will create 'nxcscan' inside this path.
 ```
 
 
